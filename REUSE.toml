@@ -1,0 +1,7 @@
+version = 1
+
+# Files that shouldn't carry an SPDX comment: the docs stay clean when rendered.
+[[annotations]]
+path = ["README.md", "CLAUDE.md", "docs/*.md"]
+SPDX-FileCopyrightText = "2026 René de Hesselle <dehesselle@web.de>"
+SPDX-License-Identifier = "0BSD"

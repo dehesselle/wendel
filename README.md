@@ -22,4 +22,8 @@ support DDC/CI and get no slider.
 
 - [docs/MANUAL.md](docs/MANUAL.md): the panel, tray menu, settings file, log file, troubleshooting.
 - [docs/DESIGN.md](docs/DESIGN.md): architecture, design decisions and core principles.
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): building and testing on a Windows devbox, CI.
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): building and testing on a Windows devbox, licensing, CI.
+
+## License
+
+wendel is licensed under [0BSD](LICENSE).

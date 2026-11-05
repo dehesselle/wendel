@@ -1,6 +1,6 @@
 # Development
 
-This document covers building, testing and CI.
+This document covers building, testing, licensing and CI.
 
 ## Layout
 
@@ -12,6 +12,9 @@ tests/Wendel.Tests/          # xUnit tests (net48)
 tools/IconGen/               # renders the exe icon during the build
 .github/workflows/build.yml  # CI
 justfile                     # devbox recipes
+LICENSE                      # the license, with its copyright line filled in
+LICENSES/                    # license texts, for REUSE
+REUSE.toml                   # copyright and license of files without a header
 ```
 
 ## Building on a Windows devbox
@@ -128,10 +131,29 @@ gets the standard control, or no checkbox if it doesn't answer as the standard s
 5. On the monitor, check that writing the values does switch the setting, as a monitor can report
    other values than it takes: the checkbox has to follow the menu and the menu the checkbox.
 
+## Licensing
+
+Every file states its copyright and license in the [REUSE](https://reuse.software) format: a header
+where the format allows comments, otherwise an entry in `REUSE.toml`. The license text is in
+`LICENSES/`.
+
+```csharp
+// SPDX-FileCopyrightText: 2026 René de Hesselle <dehesselle@web.de>
+//
+// SPDX-License-Identifier: 0BSD
+```
+
+A new file names its author and is `0BSD`. To check, without a devbox:
+
+```sh
+uvx --from 'reuse~=6.2.0' reuse lint
+```
+
 ## CI
 
-`.github/workflows/build.yml` runs on `windows-latest` for pushes, pull requests and manual runs:
-build with warnings as errors, test, and upload `wendel.exe` as the `wendel` artifact.
+`.github/workflows/build.yml` runs for pushes, pull requests and manual runs. On `windows-latest`, it
+builds with warnings as errors, tests, and uploads `wendel.exe` as the `wendel` artifact. A separate
+job on `ubuntu-latest` checks REUSE compliance.
 
 Pushing a tag that starts with a lowercase `v` makes a release:
 

@@ -12,3 +12,4 @@ A Windows tray app (C# WinForms, .NET Framework 4.8) that sets monitor brightnes
 - Never install build tools on this machine. Edit locally, build and test on the devbox (`just all`).
 - Keep the code compatible with .NET Framework 4.8: no APIs from modern .NET, no C# features that need newer runtime types (ranges, `init`, records without polyfills).
 - The README stays short. A change that affects design, usage or behavior updates the matching document in `docs/` in the same change. DESIGN.md is kept current and carries no project history.
+- Every file states its copyright and license; see Licensing in docs/DEVELOPMENT.md before adding one.

@@ -15,6 +15,7 @@ internal sealed class TrayContext : ApplicationContext
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "wendel";
+    private const string LogValuesText = "Log monitor values";
 
     // Displays need a moment after waking up, and one change raises several events.
     private const int RescanDelayMilliseconds = 1500;
@@ -27,6 +28,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Timer reloadTimer;
     private readonly Timer rescanTimer;
     private readonly MenuItem autostartItem;
+    private readonly MenuItem logValuesItem;
     private readonly MenuItem[] positionItems;
     private IReadOnlyList<MonitorState> monitors = Array.Empty<MonitorState>();
     private Settings settings;
@@ -40,6 +42,7 @@ internal sealed class TrayContext : ApplicationContext
         worker.Changed += OnMonitorsChanged;
         bar.PercentRequested += worker.SetPercent;
         bar.AutoRequested += worker.SetAuto;
+        worker.ValuesLogged += OnValuesLogged;
         bar.Opening += () =>
         {
             // The usual reason for finding nothing is a monitor that was off during the last scan.
@@ -57,6 +60,7 @@ internal sealed class TrayContext : ApplicationContext
             PositionItem("Bottom-right corner", BarPosition.BottomRightCorner),
         };
         autostartItem = new MenuItem("Start with Windows", (_, _) => ToggleAutostart());
+        logValuesItem = new MenuItem(LogValuesText, (_, _) => LogValues());
 
         NativeMethods.ApplyMenuTheme();
         SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
@@ -68,6 +72,7 @@ internal sealed class TrayContext : ApplicationContext
             new MenuItem("Position", positionItems),
             autostartItem,
             new MenuItem("Rescan monitors", (_, _) => worker.Rescan()),
+            logValuesItem,
             new MenuItem("Open settings file", (_, _) => OpenSettingsFile()),
             new MenuItem("Open log file", (_, _) => OpenLogFile()),
             new MenuItem("-"),
@@ -119,6 +124,34 @@ internal sealed class TrayContext : ApplicationContext
                 monitors = states;
                 if (!bar.IsDisposed)
                     bar.SetMonitors(states);
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // The bar is already gone; the app is exiting.
+        }
+    }
+
+    /// <summary>The values take a while, and the user has to wait for them to go on.</summary>
+    private void LogValues()
+    {
+        logValuesItem.Enabled = false;
+        logValuesItem.Text = "Logging monitor values…";
+        bar.SetBusy(true);
+        worker.LogValues();
+    }
+
+    /// <summary>Runs on the worker thread.</summary>
+    private void OnValuesLogged()
+    {
+        try
+        {
+            bar.BeginInvoke(new Action(() =>
+            {
+                logValuesItem.Enabled = true;
+                logValuesItem.Text = LogValuesText;
+                bar.SetBusy(false);
+                tray.ShowBalloonTip(3000, "wendel", "Monitor values are in the log file.", ToolTipIcon.Info);
             }));
         }
         catch (InvalidOperationException)

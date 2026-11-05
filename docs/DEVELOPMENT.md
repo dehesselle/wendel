@@ -46,10 +46,12 @@ locally (git-ignored).
 
 - `BrightnessWorkerTests`: against the simulated backend, scanning and ordering, read retries,
   monitors that never answer, write coalescing and rate limit, independent monitors, conversion to
-  a monitor's range, refreshes, the rescan after a failed write, detecting and switching the ambient
-  light sensor, monitors that ignore a switch, and logging the capabilities.
-- `CapabilitiesTests`: VCP codes from capabilities strings, with nested values, without spaces,
-  truncated, and with other sections that look similar.
+  a monitor's range, refreshes, the rescan after a failed write, detecting and switching automatic
+  brightness through a profile, monitors that ignore a switch, what the log gets by default, and
+  "Log monitor values".
+- `CapabilitiesTests`: VCP codes and the model from capabilities strings, with nested values, without
+  spaces, truncated, with other sections that look similar, and a real one from a U3225QE.
+- `MonitorProfilesTests`: what each control accepts and rejects, and which model gets which control.
 - `SliderLayoutTests`: cursor position to percent and back, clamping, column hit tests, the checkbox
   row, and scaling.
 - `SettingsTests`: JSON round trip, defaults for missing members, clamping.
@@ -74,7 +76,8 @@ Start-ScheduledTask -TaskName wendel
 
 On the machine with the monitor, check that:
 
-- the log shows the monitor with the expected brightness and maximum, and lists its VCP codes
+- "Log monitor values" shows the monitor's model and profile, and the expected brightness and maximum
+- the log otherwise has no monitor values
 - dragging and scrolling change the brightness smoothly, and it ends where the slider ends
 - a change through the monitor's own buttons shows up on the next opening
 - the Auto checkbox follows the monitor's on-screen setting on the next opening, and the on-screen
@@ -104,7 +107,26 @@ Check that:
 - all of this looks right at 150 % scaling (`LogPixels` 144 and `Win8DpiScaling` 1 under
   `HKCU\Control Panel\Desktop`, then log in again)
 - the tray menu follows light and dark app mode, and autostart toggles
+- "Log monitor values" writes an entry per monitor, with the bar blue and the menu item disabled until
+  then, and shows its notification unless Windows hides it
 - a second instance exits with code 1
+
+## Adding a monitor
+
+A monitor needs a profile only if its automatic brightness differs from the standard. Without one, it
+gets the standard control, or no checkbox if it doesn't answer as the standard says.
+
+1. Get two "Log monitor values" entries from it, as described in the
+   [manual](MANUAL.md#collecting-data-about-a-monitor).
+2. Compare them. The code that changed with the setting is the one to use; ignore unrelated codes
+   that change between any two reads, by comparing a third entry if in doubt. The entry's `model` is
+   the key for the profile.
+3. Add a line to `Known` in `src/Wendel/MonitorProfiles.cs` with the code and the values for off and
+   on. If the reported values have bits on top of those, add a `readMask`.
+4. Add the differences to the table in [DESIGN.md](DESIGN.md#monitor-profiles), and a test to
+   `MonitorProfilesTests`.
+5. On the monitor, check that writing the values does switch the setting, as a monitor can report
+   other values than it takes: the checkbox has to follow the menu and the menu the checkbox.
 
 ## CI
 

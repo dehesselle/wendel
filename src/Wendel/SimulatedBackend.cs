@@ -54,7 +54,8 @@ internal sealed class SimulatedBackend : IMonitorBackend
             lock (monitor)
             {
                 current = maximum = 0;
-                if (code == Vcp.AmbientLightSensor && !monitor.SensorAnswers)
+                bool isSensor = code == monitor.SensorCode && monitor.SensorAnswers;
+                if (code != Vcp.Brightness && !isSensor)
                 {
                     error = "Simulated: no such code";
                     return false;
@@ -65,8 +66,8 @@ internal sealed class SimulatedBackend : IMonitorBackend
                     error = "Simulated read failure";
                     return false;
                 }
-                current = code == Vcp.Brightness ? monitor.Value : monitor.Sensor;
-                maximum = code == Vcp.Brightness ? monitor.Maximum : monitor.SensorMaximum;
+                current = isSensor ? monitor.Sensor : monitor.Value;
+                maximum = isSensor ? monitor.SensorMaximum : monitor.Maximum;
                 error = null;
                 return true;
             }
@@ -144,9 +145,11 @@ internal sealed class SimulatedMonitor
     /// <summary>Whether the code of the ambient light sensor answers at all.</summary>
     public bool SensorAnswers { get; set; }
 
-    public int Sensor { get; set; } = Vcp.SensorDisabled;
+    public byte SensorCode { get; set; } = MonitorProfiles.Standard.Code;
 
-    public int SensorMaximum { get; set; } = Vcp.SensorEnabled;
+    public int Sensor { get; set; } = MonitorProfiles.Standard.Off;
+
+    public int SensorMaximum { get; set; } = MonitorProfiles.Standard.On;
 
     /// <summary>Accepts sensor writes without acting on them, as some monitors do.</summary>
     public bool IgnoresSensorWrites { get; set; }

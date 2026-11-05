@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 
 namespace Wendel;
@@ -36,8 +37,10 @@ internal sealed class MonitorState
 internal sealed class BrightnessWorker : IDisposable
 {
     private const int ReadAttempts = 3;
+    private const byte ManufacturerCodes = 0xE0;
 
     private readonly IMonitorBackend backend;
+    private readonly Func<string?, AutoBrightnessControl> profiles;
     private readonly TimeSpan writeInterval;
     private readonly TimeSpan retryPause;
     private readonly AutoResetEvent wake = new(false);
@@ -49,26 +52,30 @@ internal sealed class BrightnessWorker : IDisposable
     private readonly Dictionary<int, bool> pendingAuto = new();
     private bool rescanRequested;
     private bool refreshRequested;
+    private bool valuesRequested;
     private bool stopping;
 
     // Worker thread only.
     private readonly List<Entry> entries = new();
-    private readonly HashSet<string> capabilitiesLogged = new();
     private int nextId;
 
     /// <summary>Raised on the worker thread with the current monitors, whenever they change.</summary>
     public event Action<IReadOnlyList<MonitorState>>? Changed;
+
+    /// <summary>Raised on the worker thread when a request to <see cref="LogValues"/> is done.</summary>
+    public event Action? ValuesLogged;
 
     public BrightnessWorker(IMonitorBackend backend)
         : this(backend, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(50))
     {
     }
 
-    internal BrightnessWorker(IMonitorBackend backend, TimeSpan writeInterval, TimeSpan retryPause)
+    internal BrightnessWorker(IMonitorBackend backend, TimeSpan writeInterval, TimeSpan retryPause, Func<string?, AutoBrightnessControl>? profiles = null)
     {
         this.backend = backend;
         this.writeInterval = writeInterval;
         this.retryPause = retryPause;
+        this.profiles = profiles ?? MonitorProfiles.For;
         thread = new Thread(Run) { IsBackground = true, Name = "Brightness" };
     }
 
@@ -118,12 +125,23 @@ internal sealed class BrightnessWorker : IDisposable
         wake.Set();
     }
 
+    /// <summary>
+    /// Writes all that monitors report to the log, for adding support for a new monitor. Only reads.
+    /// Takes seconds per monitor; <see cref="ValuesLogged"/> says when it's done.
+    /// </summary>
+    public void LogValues()
+    {
+        lock (gate)
+            valuesRequested = true;
+        wake.Set();
+    }
+
     private void Run()
     {
         var nextWrite = DateTime.MinValue;
         while (true)
         {
-            bool rescan, refresh;
+            bool rescan, refresh, values;
             Dictionary<int, int>? percents = null;
             Dictionary<int, bool>? autos = null;
             lock (gate)
@@ -132,7 +150,8 @@ internal sealed class BrightnessWorker : IDisposable
                     break;
                 rescan = rescanRequested;
                 refresh = refreshRequested;
-                rescanRequested = refreshRequested = false;
+                values = valuesRequested;
+                rescanRequested = refreshRequested = valuesRequested = false;
                 if (rescan)
                 {
                     // Ids die with the rescan, and a monitor is read again anyway.
@@ -157,6 +176,8 @@ internal sealed class BrightnessWorker : IDisposable
                 WriteAll(percents, autos);
                 nextWrite = DateTime.UtcNow + writeInterval;
             }
+            if (values)
+                WriteValuesToLog();
 
             bool waiting;
             lock (gate)
@@ -175,100 +196,68 @@ internal sealed class BrightnessWorker : IDisposable
         Close();
     }
 
-    private void Scan()
+    private IEnumerable<IMonitorConnection> OpenSorted()
     {
-        Close();
-        IReadOnlyList<IMonitorConnection> opened;
         try
         {
-            opened = backend.Open();
+            return backend.Open().OrderBy(c => c.ScreenX).ThenBy(c => c.ScreenY).ToList();
         }
         catch (Exception e) when (e is DllNotFoundException || e is EntryPointNotFoundException)
         {
             Log.Error("The Monitor Configuration API is not available", e.ToString());
-            opened = Array.Empty<IMonitorConnection>();
+            return Array.Empty<IMonitorConnection>();
         }
+    }
 
-        foreach (var connection in opened.OrderBy(c => c.ScreenX).ThenBy(c => c.ScreenY))
+    private void Scan()
+    {
+        Close();
+        foreach (var connection in OpenSorted())
         {
-            if (TryRead(connection, Vcp.Brightness, out int current, out int maximum, out string? error) && maximum > 0)
-            {
-                var entry = new Entry(nextId++, connection, maximum, current);
-                entries.Add(entry);
-                Log.Info($"Monitor at {connection.ScreenX},{connection.ScreenY} \"{connection.Description}\": brightness {current} of {maximum}");
-            }
+            if (TryRead(connection, Vcp.Brightness, out int current, out int maximum, out _) && maximum > 0)
+                entries.Add(new Entry(nextId++, connection, maximum, current));
             else
-            {
-                Log.Info($"Monitor at {connection.ScreenX},{connection.ScreenY} \"{connection.Description}\" doesn't answer over DDC/CI",
-                    error ?? $"It reports a maximum of {maximum}.");
                 connection.Dispose();
-            }
         }
-        if (entries.Count == 0)
-            Log.Info("No monitor answers over DDC/CI");
 
         // The sliders can work from here on. What follows can take seconds per monitor.
         Publish();
-        bool anySensor = false;
         foreach (var entry in entries)
-        {
-            ProbeSensor(entry);
-            anySensor |= entry.Sensor is not null;
-        }
-        if (anySensor)
-            Publish();
-        foreach (var entry in entries)
-            LogCapabilities(entry);
+            FindAutoBrightness(entry);
+        Publish();
     }
 
     /// <summary>
-    /// A monitor supports the sensor if the code answers with a value the standard defines and a
-    /// maximum other than 00h, which the standard says means "not supported".
+    /// Looks up what the monitor's model uses for automatic brightness and asks the monitor whether
+    /// it supports that. Without a capabilities string the monitor gets the standard control, and
+    /// the next scan tries again.
     /// </summary>
-    private void ProbeSensor(Entry entry)
+    private void FindAutoBrightness(Entry entry)
     {
         var connection = entry.Connection;
-        if (!TryRead(connection, Vcp.AmbientLightSensor, out int current, out int maximum, out string? error))
+        var control = profiles(ModelOf(ReadCapabilities(connection, out _)));
+        if (TryRead(connection, control.Code, out int current, out int maximum, out _)
+            && control.Decode(current, maximum) is bool auto)
         {
-            Log.Info($"Ambient light sensor of \"{connection.Description}\": not supported", error);
-            return;
+            entry.Control = control;
+            entry.Auto = auto;
         }
-        int value = Vcp.SensorValue(current);
-        if ((value != Vcp.SensorDisabled && value != Vcp.SensorEnabled) || maximum == 0)
-        {
-            Log.Info($"Ambient light sensor of \"{connection.Description}\": not supported (value {current}, maximum {maximum})");
-            return;
-        }
-        entry.Sensor = value;
-        Log.Info($"Ambient light sensor of \"{connection.Description}\": {SensorName(value)} (value {current}, maximum {maximum})");
     }
 
-    /// <summary>Logs the codes a monitor offers, once per run because the request can take seconds.</summary>
-    private void LogCapabilities(Entry entry)
-    {
-        var connection = entry.Connection;
-        string key = $"{connection.Description}@{connection.ScreenX},{connection.ScreenY}";
-        if (capabilitiesLogged.Contains(key))
-            return;
+    private static string? ModelOf(string? capabilities) =>
+        capabilities is null ? null : Capabilities.Model(capabilities);
 
-        string? capabilities = null;
-        string? error = null;
+    private string? ReadCapabilities(IMonitorConnection connection, out string? error)
+    {
+        error = null;
         for (int attempt = 0; attempt < ReadAttempts; attempt++)
         {
             if (attempt > 0)
                 Thread.Sleep(retryPause);
-            if (connection.TryReadCapabilities(out capabilities, out error))
-                break;
+            if (connection.TryReadCapabilities(out string? capabilities, out error))
+                return capabilities;
         }
-        if (capabilities is null)
-        {
-            Log.Info($"Could not read the capabilities of \"{connection.Description}\"", error);
-            return;
-        }
-        capabilitiesLogged.Add(key);
-        var codes = Capabilities.VcpCodes(capabilities);
-        string listed = codes.Contains(Vcp.AmbientLightSensor) ? "listed" : "not listed";
-        Log.Info($"Capabilities of \"{connection.Description}\": VCP codes {Capabilities.Format(codes)} (0x{Vcp.AmbientLightSensor:X2} {listed})", capabilities);
+        return null;
     }
 
     private void ReadAll()
@@ -276,59 +265,50 @@ internal sealed class BrightnessWorker : IDisposable
         bool changed = false;
         foreach (var entry in entries)
         {
-            if (!TryRead(entry.Connection, Vcp.Brightness, out int current, out int maximum, out string? error) || maximum <= 0)
-            {
-                // Keep showing the last known value; a write finds out if the monitor is gone.
-                Log.Info($"Could not read the brightness of \"{entry.Connection.Description}\"", error);
-            }
-            else if (current != entry.Raw || maximum != entry.Maximum)
+            // On a failed read, keep showing the last known value; a write finds out if the monitor is gone.
+            if (TryRead(entry.Connection, Vcp.Brightness, out int current, out int maximum, out _) && maximum > 0
+                && (current != entry.Raw || maximum != entry.Maximum))
             {
                 entry.Raw = current;
                 entry.Maximum = maximum;
                 changed = true;
             }
-            changed |= ReadSensor(entry);
+            changed |= ReadAuto(entry);
         }
         if (changed)
             Publish();
     }
 
-    /// <summary>Reads a sensor the monitor is known to have; true if its state changed.</summary>
-    private bool ReadSensor(Entry entry)
+    /// <summary>Reads automatic brightness of a monitor known to have it; true if its state changed.</summary>
+    private bool ReadAuto(Entry entry)
     {
-        if (entry.Sensor is null)
+        if (entry.Control is null || !TryRead(entry.Connection, entry.Control.Code, out int current, out int maximum, out _))
             return false;
-        if (!TryRead(entry.Connection, Vcp.AmbientLightSensor, out int current, out _, out string? error))
-        {
-            Log.Info($"Could not read the ambient light sensor of \"{entry.Connection.Description}\"", error);
+        if (entry.Control.Decode(current, maximum) is not bool auto || auto == entry.Auto)
             return false;
-        }
-        int value = Vcp.SensorValue(current);
-        if (value == entry.Sensor || (value != Vcp.SensorDisabled && value != Vcp.SensorEnabled))
-            return false;
-        entry.Sensor = value;
+        entry.Auto = auto;
         return true;
     }
 
     private void WriteAll(Dictionary<int, int> percents, Dictionary<int, bool> autos)
     {
         bool failed = false;
-        var toggled = new List<KeyValuePair<Entry, int>>();
+        var toggled = new List<KeyValuePair<Entry, bool>>();
 
-        // The sensor first: a brightness following a switch to off is then not overridden.
+        // Automatic brightness first: a brightness following a switch to off is then not overridden.
         foreach (var auto in autos)
         {
             var entry = entries.Find(e => e.Id == auto.Key);
-            if (entry?.Sensor is null)
+            if (entry?.Control is null)
                 continue;
-            int value = auto.Value ? Vcp.SensorEnabled : Vcp.SensorDisabled;
-            if (entry.Connection.TryWrite(Vcp.AmbientLightSensor, value, out string? error))
+            int value = auto.Value ? entry.Control.On : entry.Control.Off;
+            if (entry.Connection.TryWrite(entry.Control.Code, value, out string? error))
             {
-                toggled.Add(new KeyValuePair<Entry, int>(entry, value));
+                toggled.Add(new KeyValuePair<Entry, bool>(entry, auto.Value));
             }
             else
             {
-                Log.Error($"Could not switch the ambient light sensor of \"{entry.Connection.Description}\" to {SensorName(value)}", error);
+                Log.Error($"Could not switch automatic brightness of \"{entry.Connection.Description}\" {(auto.Value ? "on" : "off")}", error);
                 failed = true;
             }
         }
@@ -369,35 +349,92 @@ internal sealed class BrightnessWorker : IDisposable
     }
 
     /// <summary>
-    /// Reports what the monitor says after a switch, not what was asked for. Monitors can accept
-    /// a write and do nothing. The brightness is read too, because the switch may change it.
+    /// Takes what the monitor says after a switch, not what was asked for. Monitors can accept a
+    /// write and do nothing. The brightness is read too, because the switch may change it.
     /// </summary>
-    private void ConfirmToggle(Entry entry, int requested)
+    private void ConfirmToggle(Entry entry, bool requested)
     {
-        string name = entry.Connection.Description;
-        if (TryRead(entry.Connection, Vcp.AmbientLightSensor, out int current, out _, out string? error))
-        {
-            int value = Vcp.SensorValue(current);
-            entry.Sensor = value == Vcp.SensorEnabled || value == Vcp.SensorDisabled ? value : requested;
-            if (value == requested)
-                Log.Info($"Ambient light sensor of \"{name}\": switched to {SensorName(requested)}");
-            else
-                Log.Info($"Ambient light sensor of \"{name}\": ignored the switch to {SensorName(requested)}, it reports value {current}");
-        }
-        else
-        {
-            entry.Sensor = requested;
-            Log.Info($"Ambient light sensor of \"{name}\": switched to {SensorName(requested)}, but it couldn't be read back", error);
-        }
+        var control = entry.Control!;
+        bool? reported = null;
+        if (TryRead(entry.Connection, control.Code, out int current, out int maximum, out _))
+            reported = control.Decode(current, maximum);
+        entry.Auto = reported ?? requested;
 
-        if (TryRead(entry.Connection, Vcp.Brightness, out int brightness, out int maximum, out _) && maximum > 0)
+        if (TryRead(entry.Connection, Vcp.Brightness, out int brightness, out int brightnessMaximum, out _) && brightnessMaximum > 0)
         {
             entry.Raw = brightness;
-            entry.Maximum = maximum;
+            entry.Maximum = brightnessMaximum;
         }
     }
 
-    private static string SensorName(int value) => value == Vcp.SensorEnabled ? "enabled" : "disabled";
+    /// <summary>
+    /// Writes one log entry per monitor, on connections of its own so that monitors without a
+    /// slider are covered as well. The format stays the same, so that two of these can be diffed.
+    /// </summary>
+    private void WriteValuesToLog()
+    {
+        var connections = OpenSorted().ToList();
+        if (connections.Count == 0)
+            Log.Info("No monitors found");
+        foreach (var connection in connections)
+        {
+            using (connection)
+                LogMonitor(connection);
+        }
+        ValuesLogged?.Invoke();
+    }
+
+    private void LogMonitor(IMonitorConnection connection)
+    {
+        string name = $"Monitor at {connection.ScreenX},{connection.ScreenY} \"{connection.Description}\"";
+        if (!TryRead(connection, Vcp.Brightness, out _, out _, out string? brightnessError))
+        {
+            Log.Info($"{name} doesn't answer over DDC/CI", brightnessError);
+            return;
+        }
+
+        string? capabilities = ReadCapabilities(connection, out string? capabilitiesError);
+        string? model = ModelOf(capabilities);
+        var control = profiles(model);
+
+        var details = new StringBuilder();
+        details.Append("capabilities ").AppendLine(capabilities ?? $"unavailable: {capabilitiesError}");
+        details.AppendLine(DescribeAuto(connection, control));
+        foreach (byte code in CodesToLog(capabilities, control))
+        {
+            details.AppendLine(TryRead(connection, code, out int current, out int maximum, out _)
+                ? $"{code:X2} cur=0x{current:X4} max=0x{maximum:X4}"
+                : $"{code:X2} -");
+        }
+        Log.Info($"{name}: model {model ?? "unknown"}, profile {MonitorProfiles.NameFor(model)}", details.ToString());
+    }
+
+    private string DescribeAuto(IMonitorConnection connection, AutoBrightnessControl control)
+    {
+        string code = $"(code {control.Code:X2})";
+        if (!TryRead(connection, control.Code, out int current, out int maximum, out _))
+            return $"auto brightness: not supported {code}";
+        return control.Decode(current, maximum) switch
+        {
+            true => $"auto brightness: on {code}",
+            false => $"auto brightness: off {code}",
+            null => $"auto brightness: not supported {code}",
+        };
+    }
+
+    /// <summary>
+    /// The codes the monitor lists, and those that matter even if it doesn't: the manufacturer's
+    /// range and the ones wendel uses. Everything if there is no list to go by.
+    /// </summary>
+    private static IEnumerable<byte> CodesToLog(string? capabilities, AutoBrightnessControl control)
+    {
+        var listed = capabilities is null ? Array.Empty<byte>() : Capabilities.VcpCodes(capabilities);
+        var codes = new SortedSet<byte>(listed) { Vcp.Brightness, MonitorProfiles.Standard.Code, control.Code };
+        int first = listed.Count == 0 ? 0 : ManufacturerCodes;
+        for (int code = first; code <= 0xFF; code++)
+            codes.Add((byte)code);
+        return codes;
+    }
 
     private bool TryRead(IMonitorConnection connection, byte code, out int current, out int maximum, out string? error)
     {
@@ -420,7 +457,7 @@ internal sealed class BrightnessWorker : IDisposable
                 e.Id,
                 e.Connection.Description,
                 (int)Math.Round(e.Raw * 100.0 / e.Maximum),
-                e.Sensor is null ? null : e.Sensor == Vcp.SensorEnabled))
+                e.Auto))
             .ToList();
         Changed?.Invoke(states);
     }
@@ -459,7 +496,9 @@ internal sealed class BrightnessWorker : IDisposable
 
         public int Raw { get; set; }
 
-        /// <summary>The value of the ambient light sensor's code; null if the monitor has none.</summary>
-        public int? Sensor { get; set; }
+        /// <summary>How this monitor switches automatic brightness; null if it can't.</summary>
+        public AutoBrightnessControl? Control { get; set; }
+
+        public bool? Auto { get; set; }
     }
 }

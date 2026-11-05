@@ -33,10 +33,7 @@ internal sealed class DdcBackend : IMonitorBackend
         GetMonitorInfo(monitor, ref info);
 
         if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, out uint count) || count == 0)
-        {
-            Log.Info($"No physical monitor behind the display at {info.rcMonitor.Left},{info.rcMonitor.Top}", LastError());
             return;
-        }
         var physical = new PHYSICAL_MONITOR[count];
         if (!GetPhysicalMonitorsFromHMONITOR(monitor, count, physical))
         {

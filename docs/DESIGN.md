@@ -10,17 +10,24 @@ no RFC.
 
 wendel doesn't implement any of this. Windows does, in the Monitor Configuration API in
 `dxva2.dll`, with no driver and no admin rights. All wendel knows of the protocol are two VCP codes
-(see `Vcp` in `MonitorBackend.cs`) and the format of the capabilities string:
+and the format of the capabilities string:
 
 | Code | MCCS name | Values |
 | --- | --- | --- |
 | `0x10` | Luminance | 0 to the maximum the monitor reports. |
 | `0x66` | Ambient Light Sensor | `01h` disabled, `02h` enabled. A maximum of `00h` means not supported. |
 
-Monitors can differ from the standard. The Dell U3225QE, which has this sensor, reports a maximum of
-1 rather than 2. After a change from its on-screen menu it reports `81h` or `82h`; it takes `01h` and
-`02h` when written and then reports those. wendel therefore ignores the high bit when reading and
-writes plain values. The U3225QE's `0x10` reports the brightness the sensor chose.
+## Monitor profiles
+
+Monitors can differ from the standard. Luminance has been the same so far, so `Vcp` holds it for all
+monitors. How a monitor switches automatic brightness is an `AutoBrightnessControl`: a code, the
+values for off and on, and which bits of a reply count. `MonitorProfiles` lists the controls of the
+models known to differ, and every other model gets the standard control. The steps for adding one are
+in [DEVELOPMENT.md](DEVELOPMENT.md#adding-a-monitor).
+
+| Model | Differences from the standard |
+| --- | --- |
+| Dell U3225QE | Reports a maximum of 1 rather than 2. Has reported `81h` and `82h`, also after a change from its on-screen menu. Takes `01h` and `02h` when written, and from then on reported plain values, after menu changes as well. Its `0x10` reports the brightness the sensor chose. |
 
 ## Architecture
 
@@ -31,8 +38,9 @@ writes plain values. The U3225QE's `0x10` reports the brightness the sensor chos
 | `BarForm.cs` | Borderless topmost tool window; bar, panel, animation, mouse input, painting, hiding during full screen. |
 | `SliderLayout.cs` | Geometry of the panel: columns, tracks, cursor position to percent. |
 | `BrightnessWorker.cs` | Background thread that owns the monitor connections: scans, reads, rate-limited writes. |
-| `Capabilities.cs` | Gets the VCP codes out of a capabilities string. |
-| `MonitorBackend.cs` | The interfaces between the worker and a source of monitors, and the VCP codes. |
+| `Capabilities.cs` | Gets the VCP codes and the model out of a capabilities string. |
+| `MonitorProfiles.cs` | What differs between monitor models. |
+| `MonitorBackend.cs` | The interfaces between the worker and a source of monitors, and the VCP code all monitors share. |
 | `DdcBackend.cs` | Real monitors, through `dxva2.dll`. |
 | `SimulatedBackend.cs` | Monitors in memory, for the tests and `--simulate`. |
 | `Settings.cs` | JSON settings via `DataContractJsonSerializer`. |
@@ -73,10 +81,20 @@ which `TrayContext` marshals to the form with `BeginInvoke`.
 - **Read again on every opening.** The brightness can change through the monitor's own buttons,
   and there is no notification for that. Polling would keep the bus busy for no benefit while the
   panel is closed.
-- **Support for automatic brightness decided by reading `0x66`, not from the capabilities string.**
-  The read answers exactly what matters, in the terms the standard defines, and takes milliseconds
-  where the string can take seconds. A monitor that doesn't report support gets no checkbox, because
-  Microsoft warns that codes a monitor doesn't implement can cause undefined behavior.
+- **Model from the capabilities string.** It is the only identification that comes through the same
+  DDC/CI handle as the values, as Windows' description is often just "Generic PnP Monitor". Mapping
+  EDID data from WMI to a handle would be guesswork, particularly with two monitors of one model.
+- **Capabilities read on every scan, after the sliders are up.** The request can take several
+  seconds, too long to hold up the sliders. A cache by description and position could apply the wrong
+  profile after swapping monitors, and scans are rare enough not to need one. A failed request means
+  the standard control until the next scan.
+- **Strict standard for unknown models.** Tolerating the U3225QE's high bit everywhere would make
+  similar monitors work untested, but on another monitor the same values could mean something else,
+  and wendel would then write to it. Microsoft warns that codes a monitor doesn't implement can cause
+  undefined behavior. An unknown monitor that answers differently gets no checkbox until it has a
+  profile.
+- **Whether the monitor has it decided by reading the code, not from the capabilities list.** The read
+  answers exactly what matters in the terms of the control, which a list can't.
 - **The checkbox shows what the monitor reports.** After a switch, the worker reads the code back,
   since monitors can accept a write and do nothing. It reads the brightness too, as the switch may
   change it. The state lives in the monitor, so wendel stores nothing and buttons on the monitor stay
@@ -84,11 +102,18 @@ which `TrayContext` marshals to the form with `BeginInvoke`.
 - **A disabled slider stays visible.** The value is still useful to see while the sensor is in
   charge; a brightness written then would only fight the sensor, so the UI refuses it, and switching
   on discards one still waiting.
-- **Capabilities logged once per monitor and run, after the sliders are up.** The request can take
-  several seconds, which is too long to hold up the sliders or to repeat on every wake-up. A failed
-  request is retried on the next scan. The list of codes is there for monitors that use something
-  other than `0x66` for automatic brightness, such as a code from the manufacturer range `0xE0` to
-  `0xFF`.
+- **Monitor values logged only on request.** They are only needed for adding a monitor, and logged on
+  every scan they would crowd out the errors that matter. A tray item writes one snapshot per click
+  rather than switching a mode, because finding a code takes a snapshot before and after changing the
+  setting in the monitor's menu. The fixed format lets two of them be compared with a plain diff. It
+  includes the manufacturer range `0xE0` to `0xFF` even where the monitor doesn't list it, and all
+  codes if there is no list, so that one visit to a monitor is enough. It runs on connections of its
+  own, to cover monitors that have no slider.
+- **Progress of those values shown on the bar.** They take about half a minute per monitor, and the
+  user has to wait for them before changing the monitor's setting. A tray notification alone can't
+  carry that, because Windows can hide it, for example with Do Not Disturb. The bar turns blue and the
+  menu item is disabled until the values are written, which also keeps a second click from queueing
+  another run. The notification stays as an addition.
 - **Sliders ordered by screen position, without names.** Windows' description is often only
   "Generic PnP Monitor", and two monitors of one model would look alike even with real names.
   The order on the desk tells them apart. The descriptions go to the log.
@@ -114,7 +139,7 @@ which `TrayContext` marshals to the form with `BeginInvoke`.
   only, so it reserves no space) and gets the same signal the taskbar hides on. This needs no
   polling and no heuristics. It registers again on `TaskbarCreated` after Explorer restarts. An
   open panel stays until it closes, then the bar hides.
-- **A log file for the details.** It lives in `%LOCALAPPDATA%` because it is machine-local, unlike
+- **A log file for errors.** It lives in `%LOCALAPPDATA%` because it is machine-local, unlike
   the roaming settings. Each entry opens, appends and closes the file under a lock, so the file is
   never held open. One rotation step at startup keeps it bounded. A failure to log is ignored.
 - **Native `ContextMenu` instead of `ContextMenuStrip`.** `ContextMenuStrip` paints itself and

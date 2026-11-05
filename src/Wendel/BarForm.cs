@@ -49,6 +49,7 @@ internal sealed class BarForm : Form
 
     private IReadOnlyList<MonitorState> monitors = Array.Empty<MonitorState>();
     private bool scanned;
+    private bool busy;
     private BarPosition position = BarPosition.Left;
     private int thickness = 8;
     private int wheelStep = 5;
@@ -124,6 +125,13 @@ internal sealed class BarForm : Form
         Relayout();
     }
 
+    /// <summary>Shows on the bar that the user has to wait for something. Solid, so it's seen at a glance.</summary>
+    public void SetBusy(bool value)
+    {
+        busy = value;
+        Relayout();
+    }
+
     private int Scale(int value) => (int)Math.Round(value * dpi / 96.0);
 
     private SliderLayout Sliders => new(monitors.Count, dpi, monitors.Any(m => m.Auto is not null));
@@ -178,12 +186,13 @@ internal sealed class BarForm : Form
             Interpolate(strip.Width, panel.Width, t),
             Interpolate(strip.Height, panel.Height, t));
 
-        Color from = scanned && monitors.Count == 0 ? Artwork.Inactive : Artwork.Accent;
+        Color from = busy ? Artwork.Busy : scanned && monitors.Count == 0 ? Artwork.Inactive : Artwork.Accent;
         BackColor = Color.FromArgb(
             Interpolate(from.R, Artwork.Panel.R, t),
             Interpolate(from.G, Artwork.Panel.G, t),
             Interpolate(from.B, Artwork.Panel.B, t));
-        Opacity = collapsedOpacity + (PanelOpacity - collapsedOpacity) * t;
+        double closedOpacity = busy ? MaxCollapsedOpacity : collapsedOpacity;
+        Opacity = closedOpacity + (PanelOpacity - closedOpacity) * t;
         Invalidate();
     }
 

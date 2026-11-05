@@ -14,6 +14,7 @@ internal static class Artwork
     public static readonly Color Track = Color.FromArgb(0x4A, 0x4A, 0x52);
     public static readonly Color Inactive = Color.FromArgb(0x70, 0x70, 0x78);
     public static readonly Color DisabledThumb = Color.FromArgb(0xA0, 0xA0, 0xA8);
+    public static readonly Color Busy = Color.FromArgb(0x2E, 0x8B, 0xE0);
 
     /// <summary>A checkmark filling <paramref name="bounds"/>.</summary>
     public static void DrawCheckmark(Graphics g, RectangleF bounds, Color color, float penWidth)

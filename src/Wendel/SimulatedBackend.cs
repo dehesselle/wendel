@@ -48,25 +48,31 @@ internal sealed class SimulatedBackend : IMonitorBackend
 
         public int ScreenY => 0;
 
-        public bool TryRead(out int current, out int maximum, out string? error)
+        public bool TryRead(byte code, out int current, out int maximum, out string? error)
         {
             Thread.Sleep(delay);
             lock (monitor)
             {
-                current = monitor.Value;
-                maximum = monitor.Maximum;
+                current = maximum = 0;
+                if (code == Vcp.AmbientLightSensor && !monitor.SensorAnswers)
+                {
+                    error = "Simulated: no such code";
+                    return false;
+                }
                 if (monitor.FailReads > 0)
                 {
                     monitor.FailReads--;
                     error = "Simulated read failure";
                     return false;
                 }
+                current = code == Vcp.Brightness ? monitor.Value : monitor.Sensor;
+                maximum = code == Vcp.Brightness ? monitor.Maximum : monitor.SensorMaximum;
                 error = null;
                 return true;
             }
         }
 
-        public bool TryWrite(int value, out string? error)
+        public bool TryWrite(byte code, int value, out string? error)
         {
             Thread.Sleep(delay);
             lock (monitor)
@@ -77,8 +83,36 @@ internal sealed class SimulatedBackend : IMonitorBackend
                     error = "Simulated write failure";
                     return false;
                 }
-                monitor.Value = value;
-                monitor.Writes.Add(value);
+                if (code == Vcp.Brightness)
+                {
+                    monitor.Value = value;
+                    monitor.Writes.Add(value);
+                }
+                else
+                {
+                    monitor.SensorWrites.Add(value);
+                    if (!monitor.IgnoresSensorWrites)
+                        monitor.Sensor = value;
+                }
+                error = null;
+                return true;
+            }
+        }
+
+        public bool TryReadCapabilities(out string? capabilities, out string? error)
+        {
+            Thread.Sleep(delay);
+            lock (monitor)
+            {
+                monitor.CapabilitiesCalls++;
+                if (monitor.FailCapabilities > 0)
+                {
+                    monitor.FailCapabilities--;
+                    capabilities = null;
+                    error = "Simulated capabilities failure";
+                    return false;
+                }
+                capabilities = monitor.Capabilities;
                 error = null;
                 return true;
             }
@@ -107,11 +141,30 @@ internal sealed class SimulatedMonitor
 
     public int Maximum { get; set; } = 100;
 
+    /// <summary>Whether the code of the ambient light sensor answers at all.</summary>
+    public bool SensorAnswers { get; set; }
+
+    public int Sensor { get; set; } = Vcp.SensorDisabled;
+
+    public int SensorMaximum { get; set; } = Vcp.SensorEnabled;
+
+    /// <summary>Accepts sensor writes without acting on them, as some monitors do.</summary>
+    public bool IgnoresSensorWrites { get; set; }
+
+    public string Capabilities { get; set; } = "(prot(monitor)type(lcd)model(simulated)vcp(02 10 12 14(05 08) 60(0F 11))mccs_ver(2.1))";
+
     /// <summary>The next this many reads fail.</summary>
     public int FailReads { get; set; }
 
     /// <summary>The next this many writes fail.</summary>
     public int FailWrites { get; set; }
 
+    /// <summary>The next this many capabilities requests fail.</summary>
+    public int FailCapabilities { get; set; }
+
+    public int CapabilitiesCalls { get; set; }
+
     public List<int> Writes { get; } = new();
+
+    public List<int> SensorWrites { get; } = new();
 }

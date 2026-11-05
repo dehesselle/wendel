@@ -19,8 +19,15 @@ the Windows display settings, with the brightness in percent above each one.
 - **Scroll** over the panel to change the slider under the cursor by `WheelStep` percent per notch.
   Scrolling over the closed bar opens the panel at once.
 
-The brightness is read again each time the panel opens, so changes made with the monitor's own
-buttons show up. With no monitor, the panel says "No DDC/CI monitor" and looks for monitors again
+A monitor that reports an ambient light sensor gets an **Auto** checkbox below its slider, which
+switches the monitor's automatic brightness on or off. While it is checked, the slider is grey and
+can't be changed, but still shows the brightness. If the monitor ignores the switch, the checkbox
+goes back to what the monitor reports, and the log says so. Monitors without a sensor have no
+checkbox. wendel stores no state of its own; the setting stays in the monitor.
+
+The brightness and the checkbox are read again each time the panel opens, so changes made with the
+monitor's own buttons show up, and so do changes made by its sensor. They aren't updated while the
+panel stays open. With no monitor, the panel says "No DDC/CI monitor" and looks for monitors again
 each time it opens.
 
 While an app is full screen, the bar is hidden, just like the taskbar.
@@ -71,6 +78,9 @@ indented by two spaces. The log records:
 - start and exit of wendel, with its version
 - every scan: each monitor's position, Windows' description, and its brightness and maximum, or the
   Windows error if it doesn't answer
+- every scan: whether each monitor reports an ambient light sensor, with its value and maximum
+- once per run for each monitor: all the VCP codes it lists, followed by its raw capabilities string
+- every switch of the Auto checkbox, and whether the monitor followed it
 - failed reads and writes, with the Windows error
 - unexpected errors (exceptions) with their stack trace
 
@@ -81,14 +91,19 @@ At startup, a log larger than 1 MB is renamed to `wendel.old.log`, replacing the
 Look at the [log file](#log-file) first; it shows what each monitor answered.
 
 - **Grey bar, "No DDC/CI monitor"**: no monitor answered. In order of likelihood:
-    - DDC/CI is switched off in the monitor's on-screen menu. On Dell monitors it is under "Others".
-    - The monitor is connected through a dock, hub, KVM switch or USB display adapter that doesn't
-      pass DDC/CI. Try a direct cable.
-    - It is a built-in laptop panel, which normally doesn't support DDC/CI.
-    - It runs in a virtual machine, whose display has no connection to a real monitor.
+  - DDC/CI is switched off in the monitor's on-screen menu. On Dell monitors it is under "Others".
+  - The monitor is connected through a dock, hub, KVM switch or USB display adapter that doesn't
+    pass DDC/CI. Try a direct cable.
+  - It is a built-in laptop panel, which normally doesn't support DDC/CI.
+  - It runs in a virtual machine, whose display has no connection to a real monitor.
 - **The slider moves but the brightness doesn't change**: the monitor accepts the value but ignores
   it. This is typical with HDR enabled, and with presets or features that lock the brightness, such
   as Dell's Dynamic Contrast or a uniformity mode. Try the standard preset.
+- **No Auto checkbox, although the monitor has automatic brightness**: wendel only knows the standard
+  code `0x66`, and manufacturers can use another. The log shows what the monitor answered and all the
+  codes it lists.
+- **The Auto checkbox doesn't affect the monitor, or doesn't follow its menu**: the monitor reports
+  `0x66` but uses another code for its automatic brightness.
 - **A monitor is missing after waking up**: choose "Rescan monitors". Monitors can take a while to
   answer again.
 - **The wheel does nothing**: turn on "Scroll inactive windows when I hover over them" under

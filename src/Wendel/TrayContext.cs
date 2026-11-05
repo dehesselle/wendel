@@ -39,6 +39,7 @@ internal sealed class TrayContext : ApplicationContext
         worker = new BrightnessWorker(backend);
         worker.Changed += OnMonitorsChanged;
         bar.PercentRequested += worker.SetPercent;
+        bar.AutoRequested += worker.SetAuto;
         bar.Opening += () =>
         {
             // The usual reason for finding nothing is a monitor that was off during the last scan.

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -43,6 +45,7 @@ internal sealed class BarForm : Form
     // What the user asked for, shown instead of the monitor's last reported value until
     // things settle, because reports lag behind a drag by the write rate limit.
     private readonly Dictionary<int, int> requested = new();
+    private readonly Dictionary<int, bool> requestedAuto = new();
 
     private IReadOnlyList<MonitorState> monitors = Array.Empty<MonitorState>();
     private bool scanned;
@@ -67,6 +70,9 @@ internal sealed class BarForm : Form
 
     /// <summary>The user wants a monitor (its id) at a brightness in percent.</summary>
     public event Action<int, int>? PercentRequested;
+
+    /// <summary>The user wants automatic brightness on or off for a monitor (its id).</summary>
+    public event Action<int, bool>? AutoRequested;
 
     public BarForm()
     {
@@ -120,7 +126,7 @@ internal sealed class BarForm : Form
 
     private int Scale(int value) => (int)Math.Round(value * dpi / 96.0);
 
-    private SliderLayout Sliders => new(monitors.Count, dpi);
+    private SliderLayout Sliders => new(monitors.Count, dpi, monitors.Any(m => m.Auto is not null));
 
     private Rectangle StripBounds(Rectangle area)
     {
@@ -291,7 +297,9 @@ internal sealed class BarForm : Form
 
         for (int column = 0; column < monitors.Count; column++)
         {
-            int percent = DisplayedPercent(monitors[column]);
+            var monitor = monitors[column];
+            int percent = DisplayedPercent(monitor);
+            bool auto = DisplayedAuto(monitor);
             TextRenderer.DrawText(g, $"{percent} %", font, layout.LabelBounds(column), Color.White, centred | TextFormatFlags.SingleLine);
 
             Rectangle track = layout.TrackBounds(column);
@@ -299,14 +307,43 @@ internal sealed class BarForm : Form
             int centre = thumb.Top + thumb.Height / 2;
             using (var background = new SolidBrush(Artwork.Track))
                 g.FillRectangle(background, track);
-            using (var fill = new SolidBrush(Artwork.Accent))
+            using (var fill = new SolidBrush(auto ? Artwork.Inactive : Artwork.Accent))
                 g.FillRectangle(fill, track.X, centre, track.Width, track.Bottom - centre);
-            g.FillRectangle(Brushes.White, thumb);
+            using (var thumbBrush = new SolidBrush(auto ? Artwork.DisabledThumb : Color.White))
+                g.FillRectangle(thumbBrush, thumb);
+
+            if (monitor.Auto is not null)
+                PaintCheckbox(g, layout, column, auto);
         }
+    }
+
+    private void PaintCheckbox(Graphics g, SliderLayout layout, int column, bool isChecked)
+    {
+        Rectangle box = layout.AutoBoxBounds(column);
+        if (isChecked)
+        {
+            using var fill = new SolidBrush(Artwork.Accent);
+            g.FillRectangle(fill, box);
+            var smoothing = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            Artwork.DrawCheckmark(g, box, Artwork.Panel, Math.Max(1, Scale(2)));
+            g.SmoothingMode = smoothing;
+        }
+        else
+        {
+            using var border = new Pen(Artwork.Inactive, Math.Max(1, Scale(1)));
+            g.DrawRectangle(border, box.X, box.Y, box.Width - 1, box.Height - 1);
+        }
+        TextRenderer.DrawText(g, "Auto", font, layout.AutoTextBounds(column), Color.White,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
+            | TextFormatFlags.NoPadding | TextFormatFlags.PreserveGraphicsTranslateTransform);
     }
 
     private int DisplayedPercent(MonitorState monitor) =>
         requested.TryGetValue(monitor.Id, out int percent) ? percent : monitor.Percent;
+
+    private bool DisplayedAuto(MonitorState monitor) =>
+        requestedAuto.TryGetValue(monitor.Id, out bool auto) ? auto : monitor.Auto == true;
 
     /// <summary>The cursor relative to the finished panel, valid while the window is still growing.</summary>
     private Point CursorInPanel()
@@ -329,12 +366,29 @@ internal sealed class BarForm : Form
         PercentRequested?.Invoke(monitor.Id, percent);
     }
 
+    private void ToggleAuto(int column)
+    {
+        var monitor = monitors[column];
+        if (monitor.Auto is null)
+            return;
+        bool on = !DisplayedAuto(monitor);
+        settleTimer.Stop();
+        settleTimer.Start();
+        requestedAuto[monitor.Id] = on;
+        // A brightness the user just set no longer applies once the sensor is in charge.
+        if (on)
+            requested.Remove(monitor.Id);
+        Invalidate();
+        AutoRequested?.Invoke(monitor.Id, on);
+    }
+
     private void OnSettled(object? sender, EventArgs e)
     {
         if (dragColumn >= 0)
             return;
         settleTimer.Stop();
         requested.Clear();
+        requestedAuto.Clear();
         Invalidate();
     }
 
@@ -367,7 +421,16 @@ internal sealed class BarForm : Form
         if (!wasOpen || monitors.Count == 0)
             return;
         Point point = CursorInPanel();
-        dragColumn = Sliders.ColumnAt(point.X);
+        var layout = Sliders;
+        int column = layout.ColumnAt(point.X);
+        if (layout.IsInAutoRow(point.Y))
+        {
+            ToggleAuto(column);
+            return;
+        }
+        if (DisplayedAuto(monitors[column]))
+            return;
+        dragColumn = column;
         DragTo(point);
     }
 
@@ -398,6 +461,8 @@ internal sealed class BarForm : Form
         if (notches == 0)
             return;
         int column = Sliders.ColumnAt(CursorInPanel().X);
+        if (DisplayedAuto(monitors[column]))
+            return;
         Request(column, DisplayedPercent(monitors[column]) + notches * wheelStep);
     }
 

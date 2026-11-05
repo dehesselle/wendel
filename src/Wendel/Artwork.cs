@@ -13,6 +13,24 @@ internal static class Artwork
     public static readonly Color Panel = Color.FromArgb(0x1E, 0x1E, 0x22);
     public static readonly Color Track = Color.FromArgb(0x4A, 0x4A, 0x52);
     public static readonly Color Inactive = Color.FromArgb(0x70, 0x70, 0x78);
+    public static readonly Color DisabledThumb = Color.FromArgb(0xA0, 0xA0, 0xA8);
+
+    /// <summary>A checkmark filling <paramref name="bounds"/>.</summary>
+    public static void DrawCheckmark(Graphics g, RectangleF bounds, Color color, float penWidth)
+    {
+        using var pen = new Pen(color, penWidth)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round,
+        };
+        g.DrawLines(pen, new[]
+        {
+            new PointF(bounds.X + bounds.Width * 0.2f, bounds.Y + bounds.Height * 0.55f),
+            new PointF(bounds.X + bounds.Width * 0.42f, bounds.Y + bounds.Height * 0.76f),
+            new PointF(bounds.X + bounds.Width * 0.8f, bounds.Y + bounds.Height * 0.26f),
+        });
+    }
 
     /// <summary>A sun: a disc with eight rays, filling <paramref name="bounds"/>.</summary>
     public static void DrawSun(Graphics g, RectangleF bounds, Color color)

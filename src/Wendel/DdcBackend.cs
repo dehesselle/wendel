@@ -2,18 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Wendel;
 
 /// <summary>
 /// Real monitors, through the Monitor Configuration API in dxva2.dll. Windows implements the
-/// DDC/CI transport; all this class knows of the protocol is the MCCS code for brightness.
+/// DDC/CI transport; this class knows nothing of what the codes mean.
 /// </summary>
 internal sealed class DdcBackend : IMonitorBackend
 {
-    /// <summary>MCCS VCP code "Luminance".</summary>
-    private const byte VcpBrightness = 0x10;
-
     public IReadOnlyList<IMonitorConnection> Open()
     {
         var handles = new List<IntPtr>();
@@ -68,10 +66,10 @@ internal sealed class DdcBackend : IMonitorBackend
 
         public int ScreenY { get; }
 
-        public bool TryRead(out int current, out int maximum, out string? error)
+        public bool TryRead(byte code, out int current, out int maximum, out string? error)
         {
             current = maximum = 0;
-            if (!GetVCPFeatureAndVCPFeatureReply(monitor.hPhysicalMonitor, VcpBrightness, out _, out uint cur, out uint max))
+            if (!GetVCPFeatureAndVCPFeatureReply(monitor.hPhysicalMonitor, code, out _, out uint cur, out uint max))
             {
                 error = LastError();
                 return false;
@@ -82,13 +80,32 @@ internal sealed class DdcBackend : IMonitorBackend
             return true;
         }
 
-        public bool TryWrite(int value, out string? error)
+        public bool TryWrite(byte code, int value, out string? error)
         {
-            if (!SetVCPFeature(monitor.hPhysicalMonitor, VcpBrightness, (uint)value))
+            if (!SetVCPFeature(monitor.hPhysicalMonitor, code, (uint)value))
             {
                 error = LastError();
                 return false;
             }
+            error = null;
+            return true;
+        }
+
+        public bool TryReadCapabilities(out string? capabilities, out string? error)
+        {
+            capabilities = null;
+            if (!GetCapabilitiesStringLength(monitor.hPhysicalMonitor, out uint length))
+            {
+                error = LastError();
+                return false;
+            }
+            var buffer = new StringBuilder((int)length);
+            if (!CapabilitiesRequestAndCapabilitiesReply(monitor.hPhysicalMonitor, buffer, length))
+            {
+                error = LastError();
+                return false;
+            }
+            capabilities = buffer.ToString();
             error = null;
             return true;
         }
@@ -128,6 +145,15 @@ internal sealed class DdcBackend : IMonitorBackend
     [DllImport("dxva2.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetVCPFeature(IntPtr hMonitor, byte bVCPCode, uint dwNewValue);
+
+    [DllImport("dxva2.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCapabilitiesStringLength(IntPtr hMonitor, out uint pdwCapabilitiesStringLengthInCharacters);
+
+    // The string is ASCII, and the length includes the terminating null character.
+    [DllImport("dxva2.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CapabilitiesRequestAndCapabilitiesReply(IntPtr hMonitor, [Out, MarshalAs(UnmanagedType.LPStr)] StringBuilder pszASCIICapabilitiesString, uint dwCapabilitiesStringLengthInCharacters);
 
     [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Unicode)]
     private struct PHYSICAL_MONITOR

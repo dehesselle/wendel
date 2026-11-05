@@ -29,7 +29,10 @@ internal static class Program
         return 0;
     }
 
-    /// <summary><c>--simulate [N]</c> replaces the real monitors with N simulated ones.</summary>
+    /// <summary>
+    /// <c>--simulate [N]</c> replaces the real monitors with N simulated ones. Only the first has
+    /// an ambient light sensor, so one run shows a slider with and one without a checkbox.
+    /// </summary>
     private static IMonitorBackend CreateBackend(string[] args)
     {
         int index = Array.IndexOf(args, "--simulate");
@@ -39,7 +42,10 @@ internal static class Program
             ? n
             : DefaultSimulatedMonitors;
         Log.Info($"Simulated monitors: {count}");
-        return new SimulatedBackend(count);
+        var backend = new SimulatedBackend(count);
+        if (count > 0)
+            backend.Monitors[0].SensorAnswers = true;
+        return backend;
     }
 
     /// <summary>Logs an exception on the UI thread, then offers the same dialog WinForms shows by default.</summary>

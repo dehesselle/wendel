@@ -46,8 +46,12 @@ locally (git-ignored).
 
 - `BrightnessWorkerTests`: against the simulated backend, scanning and ordering, read retries,
   monitors that never answer, write coalescing and rate limit, independent monitors, conversion to
-  a monitor's range, refreshes, and the rescan after a failed write.
-- `SliderLayoutTests`: cursor position to percent and back, clamping, column hit tests, and scaling.
+  a monitor's range, refreshes, the rescan after a failed write, detecting and switching the ambient
+  light sensor, monitors that ignore a switch, and logging the capabilities.
+- `CapabilitiesTests`: VCP codes from capabilities strings, with nested values, without spaces,
+  truncated, and with other sections that look similar.
+- `SliderLayoutTests`: cursor position to percent and back, clamping, column hit tests, the checkbox
+  row, and scaling.
 - `SettingsTests`: JSON round trip, defaults for missing members, clamping.
 - `LogTests`: entry format and rotation.
 
@@ -70,15 +74,18 @@ Start-ScheduledTask -TaskName wendel
 
 On the machine with the monitor, check that:
 
-- the log shows the monitor with the expected brightness and maximum
+- the log shows the monitor with the expected brightness and maximum, and lists its VCP codes
 - dragging and scrolling change the brightness smoothly, and it ends where the slider ends
 - a change through the monitor's own buttons shows up on the next opening
+- the Auto checkbox follows the monitor's on-screen setting on the next opening, and the on-screen
+  setting follows the checkbox
 - it still works after sleep and wake, and after unplugging and replugging the monitor
 
 ### The UI with simulated monitors
 
 `wendel.exe --simulate N` uses N simulated monitors instead of real ones (2 without a number, 0 for
-the "No DDC/CI monitor" state). This works on the devbox, in a desktop session: RDP in, or set
+the "No DDC/CI monitor" state). Only the first has an ambient light sensor, so one run shows a slider
+with and one without a checkbox. This works on the devbox, in a desktop session: RDP in, or set
 autologon on the VM and start the exe with the scheduled task above. In such a session, a script
 can drive the app with `SetCursorPos` and `mouse_event` and take screenshots with
 `Graphics.CopyFromScreen`. Keep a tray menu sequence in one process: a process starting while the
@@ -90,6 +97,8 @@ Check that:
 - the foreground window stays in the foreground through hover, click, drag and scroll
 - a drag can leave the panel without closing it; releasing outside closes it
 - the wheel changes the slider under the cursor, also with fractions of a notch
+- checking Auto greys the slider and keeps its value, click, drag and wheel do nothing there, and
+  unchecking enables it again, without touching the other slider
 - all four positions work, including the tray menu's position items
 - the bar hides during full screen and comes back
 - all of this looks right at 150 % scaling (`LogPixels` 144 and `Win8DpiScaling` 1 under

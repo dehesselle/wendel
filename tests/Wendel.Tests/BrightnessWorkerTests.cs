@@ -270,6 +270,231 @@ public sealed class BrightnessWorkerTests : IDisposable
         WaitFor(s => s.Count == 2);
     }
 
+    /// <summary>Reads the log while the worker writes to it, without getting in its way: a blocked entry is lost.</summary>
+    private string LogText()
+    {
+        if (!File.Exists(Log.FilePath))
+            return "";
+        using var stream = new FileStream(Log.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private List<int> SensorWrites(int monitor)
+    {
+        lock (backend.Monitors[monitor])
+            return backend.Monitors[monitor].SensorWrites.ToList();
+    }
+
+    [Fact]
+    public void MonitorWithoutASensorHasNoAutoState()
+    {
+        worker.Start();
+        WaitUntil(() => LogText().Contains("Ambient light sensor of \"Simulated monitor 2\": not supported"));
+        var states = WaitFor(s => s.Count == 2);
+        Assert.Null(states[0].Auto);
+        Assert.Null(states[1].Auto);
+    }
+
+    [Theory]
+    [InlineData(Vcp.SensorDisabled, false)]
+    [InlineData(Vcp.SensorEnabled, true)]
+    public void ReportsTheSensorsState(int value, bool expected)
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        backend.Monitors[0].Sensor = value;
+        worker.Start();
+        var states = WaitFor(s => s.Count == 2 && s[0].Auto is not null);
+        Assert.Equal(expected, states[0].Auto);
+        Assert.Null(states[1].Auto);
+    }
+
+    [Theory]
+    [InlineData(0x81, false)]
+    [InlineData(0x82, true)]
+    public void AcceptsTheHighBitAndLowMaximumOfADellU3225QE(int value, bool expected)
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        backend.Monitors[0].Sensor = value;
+        backend.Monitors[0].SensorMaximum = 1;
+        worker.Start();
+        Assert.Equal(expected, WaitFor(s => s.Count == 2 && s[0].Auto is not null)[0].Auto);
+    }
+
+    [Fact]
+    public void WritesPlainValuesAfterReadingTheHighBit()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        backend.Monitors[0].Sensor = 0x81;
+        worker.Start();
+        int id = WaitFor(s => s.Count == 2 && s[0].Auto == false)[0].Id;
+
+        worker.SetAuto(id, true);
+
+        WaitFor(s => s[0].Auto == true);
+        Assert.Equal(new[] { Vcp.SensorEnabled }, SensorWrites(0));
+    }
+
+    [Fact]
+    public void RefreshSeesAnOnScreenChangeWithTheHighBit()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        WaitFor(s => s.Count == 2 && s[0].Auto == false);
+        lock (backend.Monitors[0])
+            backend.Monitors[0].Sensor = 0x82;
+
+        worker.Refresh();
+
+        WaitFor(s => s[0].Auto == true);
+    }
+
+    [Theory]
+    [InlineData(0, Vcp.SensorEnabled)]
+    [InlineData(3, Vcp.SensorEnabled)]
+    [InlineData(0x83, 1)]
+    [InlineData(Vcp.SensorEnabled, 0)]
+    public void ValuesOutsideTheStandardMeanNoSensor(int value, int maximum)
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        backend.Monitors[0].Sensor = value;
+        backend.Monitors[0].SensorMaximum = maximum;
+        worker.Start();
+        WaitUntil(() => LogText().Contains("Ambient light sensor of \"Simulated monitor 1\": not supported (value"));
+        Assert.Null(WaitFor(s => s.Count == 2)[0].Auto);
+    }
+
+    [Fact]
+    public void SwitchesTheSensorOnAndOffAndConfirms()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        int id = WaitFor(s => s.Count == 2 && s[0].Auto == false)[0].Id;
+
+        worker.SetAuto(id, true);
+        WaitFor(s => s[0].Auto == true);
+        worker.SetAuto(id, false);
+        WaitFor(s => s[0].Auto == false);
+
+        Assert.Equal(new[] { Vcp.SensorEnabled, Vcp.SensorDisabled }, SensorWrites(0));
+        Assert.Contains("switched to enabled", LogText());
+        Assert.Contains("switched to disabled", LogText());
+    }
+
+    [Fact]
+    public void ReportsTheTruthWhenTheMonitorIgnoresASwitch()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        backend.Monitors[0].IgnoresSensorWrites = true;
+        worker.Start();
+        int id = WaitFor(s => s.Count == 2 && s[0].Auto == false)[0].Id;
+
+        worker.SetAuto(id, true);
+        WaitUntil(() => LogText().Contains("ignored the switch to enabled"));
+
+        Assert.Equal(new[] { Vcp.SensorEnabled }, SensorWrites(0));
+        Assert.Equal(false, WaitFor(_ => true)[0].Auto);
+    }
+
+    [Fact]
+    public void ASwitchReadsTheBrightnessAgain()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        int id = WaitFor(s => s.Count == 2 && s[0].Auto == false)[0].Id;
+        lock (backend.Monitors[0])
+            backend.Monitors[0].Value = 12;
+
+        worker.SetAuto(id, true);
+
+        WaitFor(s => s[0].Auto == true && s[0].Percent == 12);
+    }
+
+    [Fact]
+    public void FailedSwitchRescans()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        var states = WaitFor(s => s.Count == 2 && s[0].Auto == false);
+        lock (backend.Monitors[0])
+            backend.Monitors[0].FailWrites = 1;
+
+        worker.SetAuto(states[0].Id, true);
+
+        var after = WaitFor(s => s.Count == 2 && s[0].Id != states[0].Id && s[0].Auto is not null);
+        Assert.Equal(false, after[0].Auto);
+    }
+
+    [Fact]
+    public void SwitchingOnDiscardsAWaitingBrightness()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        int id = WaitFor(s => s.Count == 2 && s[0].Auto == false)[0].Id;
+
+        // The first write opens the rate limit's window, so the next value has to wait in it.
+        worker.SetPercent(id, 10);
+        WaitUntil(() => Writes(0).Count == 1);
+        worker.SetPercent(id, 90);
+        worker.SetAuto(id, true);
+
+        WaitFor(s => s[0].Auto == true);
+        Assert.Equal(new[] { 10 }, Writes(0));
+    }
+
+    [Fact]
+    public void RefreshSeesTheSensorChangedOnTheMonitor()
+    {
+        backend.Monitors[0].SensorAnswers = true;
+        worker.Start();
+        WaitFor(s => s.Count == 2 && s[0].Auto == false);
+        lock (backend.Monitors[0])
+            backend.Monitors[0].Sensor = Vcp.SensorEnabled;
+
+        worker.Refresh();
+
+        WaitFor(s => s[0].Auto == true);
+    }
+
+    [Fact]
+    public void LogsTheCodesOfEveryMonitor()
+    {
+        backend.Monitors[0].Capabilities = "(type(lcd)vcp(66 10 14(05 08)))";
+        worker.Start();
+        WaitUntil(() => LogText().Contains("Capabilities of \"Simulated monitor 2\""));
+        string log = LogText();
+        Assert.Contains("Capabilities of \"Simulated monitor 1\": VCP codes 10 14 66 (0x66 listed)", log);
+        Assert.Contains("  (type(lcd)vcp(66 10 14(05 08)))", log);
+        Assert.Contains("Capabilities of \"Simulated monitor 2\": VCP codes 02 10 12 14 60 (0x66 not listed)", log);
+    }
+
+    [Fact]
+    public void FetchesCapabilitiesOncePerMonitor()
+    {
+        worker.Start();
+        WaitUntil(() => LogText().Contains("Capabilities of \"Simulated monitor 2\""));
+        worker.Rescan();
+        WaitUntil(() => backend.OpenCount == 2);
+        worker.Rescan();
+        WaitUntil(() => backend.OpenCount == 3);
+        WaitFor(s => s.Count == 2);
+        lock (backend.Monitors[0])
+            Assert.Equal(1, backend.Monitors[0].CapabilitiesCalls);
+    }
+
+    [Fact]
+    public void RetriesCapabilitiesOnTheNextScan()
+    {
+        backend.Monitors[0].FailCapabilities = 3;
+        worker.Start();
+        WaitUntil(() => LogText().Contains("Could not read the capabilities of \"Simulated monitor 1\""));
+        Assert.DoesNotContain("Capabilities of \"Simulated monitor 1\"", LogText());
+
+        worker.Rescan();
+
+        WaitUntil(() => LogText().Contains("Capabilities of \"Simulated monitor 1\": VCP codes"));
+    }
+
     [Fact]
     public void DisposeStopsTheWorker()
     {

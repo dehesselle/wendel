@@ -13,17 +13,26 @@ internal readonly struct SliderLayout
     private const int ColumnWidth = 56;
     private const int MessageWidth = 120;
     private const int PanelHeight = 220;
+    private const int AutoRowHeight = 24;
     private const int Padding = 6;
     private const int LabelHeight = 28;
     private const int TrackWidth = 8;
     private const int ThumbHeight = 8;
+    private const int BoxSize = 13;
+    private const int BoxInset = 5;
+    private const int BoxGap = 4;
 
     private readonly int dpi;
+    private readonly bool autoRow;
 
-    public SliderLayout(int monitorCount, int dpi)
+    /// <param name="monitorCount">The number of sliders.</param>
+    /// <param name="dpi">The scaling.</param>
+    /// <param name="autoRow">Whether any monitor has a checkbox, which adds a row below the tracks.</param>
+    public SliderLayout(int monitorCount, int dpi, bool autoRow = false)
     {
         MonitorCount = monitorCount;
         this.dpi = dpi;
+        this.autoRow = autoRow;
     }
 
     public int MonitorCount { get; }
@@ -32,7 +41,7 @@ internal readonly struct SliderLayout
 
     public Size PanelSize => new(
         MonitorCount == 0 ? Scale(MessageWidth) : Scale(Padding) * 2 + MonitorCount * Scale(ColumnWidth),
-        Scale(PanelHeight));
+        Scale(PanelHeight) + (autoRow ? Scale(AutoRowHeight) : 0));
 
     /// <summary>The column at <paramref name="x"/>, the nearest one in the padding or outside the panel.</summary>
     public int ColumnAt(int x)
@@ -75,5 +84,29 @@ internal readonly struct SliderLayout
         var track = TrackBounds(0);
         double percent = (track.Bottom - y) * 100.0 / track.Height;
         return Math.Max(0, Math.Min(100, (int)Math.Round(percent)));
+    }
+
+    /// <summary>Whether <paramref name="y"/> is in the row of the checkboxes, if there is one.</summary>
+    public bool IsInAutoRow(int y) => autoRow && y >= Scale(PanelHeight) - Scale(Padding);
+
+    public Rectangle AutoBoxBounds(int column)
+    {
+        int y = Scale(PanelHeight) + (Scale(AutoRowHeight) - Scale(Padding) - Scale(BoxSize)) / 2;
+        return new Rectangle(
+            Scale(Padding) + column * Scale(ColumnWidth) + Scale(BoxInset),
+            y,
+            Scale(BoxSize),
+            Scale(BoxSize));
+    }
+
+    public Rectangle AutoTextBounds(int column)
+    {
+        var box = AutoBoxBounds(column);
+        int left = box.Right + Scale(BoxGap);
+        return new Rectangle(
+            left,
+            box.Y - Scale(2),
+            Scale(Padding) + (column + 1) * Scale(ColumnWidth) - left,
+            box.Height + Scale(4));
     }
 }

@@ -76,17 +76,58 @@ public class SliderLayoutTests
     }
 
     [Theory]
-    [InlineData(3, 96)]
-    [InlineData(3, 144)]
-    public void EverythingFitsInsideThePanel(int monitors, int dpi)
+    [InlineData(3, 96, false)]
+    [InlineData(3, 144, false)]
+    [InlineData(3, 96, true)]
+    [InlineData(3, 144, true)]
+    [InlineData(1, 192, true)]
+    public void EverythingFitsInsideThePanel(int monitors, int dpi, bool autoRow)
     {
-        var layout = new SliderLayout(monitors, dpi);
+        var layout = new SliderLayout(monitors, dpi, autoRow);
         var panel = new System.Drawing.Rectangle(System.Drawing.Point.Empty, layout.PanelSize);
         for (int column = 0; column < monitors; column++)
         {
             Assert.True(panel.Contains(layout.LabelBounds(column)));
             Assert.True(panel.Contains(layout.ThumbBounds(column, 0)));
             Assert.True(panel.Contains(layout.ThumbBounds(column, 100)));
+            if (autoRow)
+            {
+                Assert.True(panel.Contains(layout.AutoBoxBounds(column)));
+                Assert.True(panel.Contains(layout.AutoTextBounds(column)));
+            }
         }
+    }
+
+    [Theory]
+    [InlineData(96)]
+    [InlineData(144)]
+    public void AutoRowMakesThePanelTallerOnly(int dpi)
+    {
+        var without = new SliderLayout(2, dpi).PanelSize;
+        var with = new SliderLayout(2, dpi, autoRow: true).PanelSize;
+        Assert.True(with.Height > without.Height);
+        Assert.Equal(without.Width, with.Width);
+    }
+
+    [Theory]
+    [InlineData(96)]
+    [InlineData(144)]
+    public void AutoRowIsBelowTheTrackAndHitsNoSlider(int dpi)
+    {
+        var layout = new SliderLayout(2, dpi, autoRow: true);
+        var box = layout.AutoBoxBounds(1);
+        var bottomThumb = layout.ThumbBounds(1, 0);
+        Assert.True(box.Top >= bottomThumb.Bottom);
+        Assert.True(layout.IsInAutoRow(box.Top));
+        Assert.True(layout.IsInAutoRow(box.Bottom));
+        Assert.False(layout.IsInAutoRow(layout.TrackBounds(1).Bottom - 1));
+        Assert.Equal(1, layout.ColumnAt(box.Left));
+    }
+
+    [Fact]
+    public void WithoutAutoRowNothingIsInIt()
+    {
+        var layout = new SliderLayout(2, 96);
+        Assert.False(layout.IsInAutoRow(layout.PanelSize.Height - 1));
     }
 }

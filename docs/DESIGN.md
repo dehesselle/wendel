@@ -5,12 +5,22 @@ This document describes how wendel is built and why.
 ## DDC/CI
 
 DDC/CI is the channel between a computer and a monitor, running over I2C on the video cable. VESA
-specifies the transport (DDC/CI) and the commands (MCCS, the Monitor Control Command Set), where
-brightness is VCP code `0x10`, "Luminance". There is no RFC.
+specifies the transport (DDC/CI) and the commands (MCCS, the Monitor Control Command Set). There is
+no RFC.
 
 wendel doesn't implement any of this. Windows does, in the Monitor Configuration API in
-`dxva2.dll`, with no driver and no admin rights. All wendel knows of the protocol is the code
-`0x10`.
+`dxva2.dll`, with no driver and no admin rights. All wendel knows of the protocol are two VCP codes
+(see `Vcp` in `MonitorBackend.cs`) and the format of the capabilities string:
+
+| Code | MCCS name | Values |
+| --- | --- | --- |
+| `0x10` | Luminance | 0 to the maximum the monitor reports. |
+| `0x66` | Ambient Light Sensor | `01h` disabled, `02h` enabled. A maximum of `00h` means not supported. |
+
+Monitors can differ from the standard. The Dell U3225QE, which has this sensor, reports a maximum of
+1 rather than 2. After a change from its on-screen menu it reports `81h` or `82h`; it takes `01h` and
+`02h` when written and then reports those. wendel therefore ignores the high bit when reading and
+writes plain values. The U3225QE's `0x10` reports the brightness the sensor chose.
 
 ## Architecture
 
@@ -21,7 +31,8 @@ wendel doesn't implement any of this. Windows does, in the Monitor Configuration
 | `BarForm.cs` | Borderless topmost tool window; bar, panel, animation, mouse input, painting, hiding during full screen. |
 | `SliderLayout.cs` | Geometry of the panel: columns, tracks, cursor position to percent. |
 | `BrightnessWorker.cs` | Background thread that owns the monitor connections: scans, reads, rate-limited writes. |
-| `MonitorBackend.cs` | The interfaces between the worker and a source of monitors. |
+| `Capabilities.cs` | Gets the VCP codes out of a capabilities string. |
+| `MonitorBackend.cs` | The interfaces between the worker and a source of monitors, and the VCP codes. |
 | `DdcBackend.cs` | Real monitors, through `dxva2.dll`. |
 | `SimulatedBackend.cs` | Monitors in memory, for the tests and `--simulate`. |
 | `Settings.cs` | JSON settings via `DataContractJsonSerializer`. |
@@ -62,6 +73,22 @@ which `TrayContext` marshals to the form with `BeginInvoke`.
 - **Read again on every opening.** The brightness can change through the monitor's own buttons,
   and there is no notification for that. Polling would keep the bus busy for no benefit while the
   panel is closed.
+- **Support for automatic brightness decided by reading `0x66`, not from the capabilities string.**
+  The read answers exactly what matters, in the terms the standard defines, and takes milliseconds
+  where the string can take seconds. A monitor that doesn't report support gets no checkbox, because
+  Microsoft warns that codes a monitor doesn't implement can cause undefined behavior.
+- **The checkbox shows what the monitor reports.** After a switch, the worker reads the code back,
+  since monitors can accept a write and do nothing. It reads the brightness too, as the switch may
+  change it. The state lives in the monitor, so wendel stores nothing and buttons on the monitor stay
+  in charge.
+- **A disabled slider stays visible.** The value is still useful to see while the sensor is in
+  charge; a brightness written then would only fight the sensor, so the UI refuses it, and switching
+  on discards one still waiting.
+- **Capabilities logged once per monitor and run, after the sliders are up.** The request can take
+  several seconds, which is too long to hold up the sliders or to repeat on every wake-up. A failed
+  request is retried on the next scan. The list of codes is there for monitors that use something
+  other than `0x66` for automatic brightness, such as a code from the manufacturer range `0xE0` to
+  `0xFF`.
 - **Sliders ordered by screen position, without names.** Windows' description is often only
   "Generic PnP Monitor", and two monitors of one model would look alike even with real names.
   The order on the desk tells them apart. The descriptions go to the log.

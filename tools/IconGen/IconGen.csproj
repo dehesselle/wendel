@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Wendel</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <!-- Linked, not copied, so the exe icon is drawn by the same code as the tray icon. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\Wendel\Artwork.cs" Link="Artwork.cs" />
+    <Compile Include="..\..\src\Wendel\NativeMethods.cs" Link="NativeMethods.cs" />
+  </ItemGroup>
+
+</Project>

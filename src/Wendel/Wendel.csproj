@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>wendel</AssemblyName>
+    <RootNamespace>Wendel</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+    <Product>wendel</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Wendel.Tests" />
+  </ItemGroup>
+
+  <!-- The exe icon is rendered by tools/IconGen at build time; see docs/DESIGN.md. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\tools\IconGen\IconGen.csproj"
+                      ReferenceOutputAssembly="false" OutputItemType="IconGen"
+                      Private="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="GenerateAppIcon" BeforeTargets="CoreCompile"
+          DependsOnTargets="ResolveProjectReferences"
+          Inputs="@(IconGen)" Outputs="$(IntermediateOutputPath)wendel.ico">
+    <Exec Command="&quot;@(IconGen)&quot; &quot;$(IntermediateOutputPath)wendel.ico&quot;" />
+  </Target>
+
+  <!-- Separate from GenerateAppIcon so the icon is still used when that target is skipped. -->
+  <Target Name="SetAppIcon" BeforeTargets="CoreCompile" DependsOnTargets="GenerateAppIcon">
+    <PropertyGroup>
+      <ApplicationIcon>$(IntermediateOutputPath)wendel.ico</ApplicationIcon>
+    </PropertyGroup>
+    <ItemGroup>
+      <FileWrites Include="$(ApplicationIcon)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

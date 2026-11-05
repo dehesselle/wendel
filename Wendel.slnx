@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wendel/Wendel.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Wendel.Tests/Wendel.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/IconGen/IconGen.csproj" />
+  </Folder>
+</Solution>

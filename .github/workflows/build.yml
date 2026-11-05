@@ -1,0 +1,38 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build
+        run: |
+          $version = if ($env:GITHUB_REF -like 'refs/tags/v*') { "-p:Version=$($env:GITHUB_REF_NAME.Substring(1))" }
+          dotnet build -c Release -warnaserror $version
+
+      - name: Test
+        run: dotnet test -c Release --no-build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wendel
+          path: src/Wendel/bin/Release/net48/wendel.exe
+          if-no-files-found: error
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME src/Wendel/bin/Release/net48/wendel.exe --verify-tag --generate-notes --draft

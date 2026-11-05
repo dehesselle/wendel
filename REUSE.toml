@@ -1,7 +1,8 @@
 version = 1
 
-# Files that shouldn't carry an SPDX comment: the docs stay clean when rendered.
+# Files that can't or shouldn't carry an SPDX comment: binaries, and docs that stay clean when
+# rendered.
 [[annotations]]
-path = ["README.md", "CLAUDE.md", "docs/*.md"]
+path = ["README.md", "CLAUDE.md", "docs/*.md", "docs/wendel.gif"]
 SPDX-FileCopyrightText = "2026 René de Hesselle <dehesselle@web.de>"
 SPDX-License-Identifier = "0BSD"

@@ -1,5 +1,11 @@
 # wendel
 
+> __Wendel__, short for Glühwendel ·  _German noun_
+>
+> light bulb filament
+
+<img src="docs/wendel.gif" alt="Demo" width="300"><!-- markdownlint-disable-line -->
+
 A small Windows tray app that sets the brightness of external monitors over DDC/CI, so you
 don't have to reach for the buttons on the monitor. It keeps a thin bar at the edge of the
 screen. Hover over the bar and a small panel appears with one vertical slider per monitor; drag
@@ -23,6 +29,10 @@ support DDC/CI and get no slider.
 - [docs/MANUAL.md](docs/MANUAL.md): the panel, tray menu, settings file, log file, troubleshooting.
 - [docs/DESIGN.md](docs/DESIGN.md): architecture, design decisions and core principles.
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): building and testing on a Windows devbox, licensing, CI.
+
+## AI disclosure
+
+Substantial parts of this code were generated with Opus 5.x. Generated code was tested, but not every line was reviewed in detail.
 
 ## License
 

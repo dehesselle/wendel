@@ -68,7 +68,9 @@ logs "The request is not supported". A notebook's built-in panel doesn't get fur
 physical machine with an external DDC/CI monitor.** Copy `wendel.exe` there; it needs no tools.
 
 Start the exe from a logged-in desktop session. An SSH session has no real desktop, so the monitors
-it sees aren't the real ones. From SSH, register a scheduled task with an interactive principal:
+it sees aren't the real ones, and the app exits at once: setting the bar's opacity fails there with
+"A device attached to the system is not functioning", which it logs. From SSH, register a scheduled
+task with an interactive principal:
 
 ```powershell
 $action = New-ScheduledTaskAction -Execute 'C:\path\to\wendel.exe'

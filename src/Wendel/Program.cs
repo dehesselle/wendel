@@ -52,10 +52,19 @@ internal static class Program
         return backend;
     }
 
-    /// <summary>Logs an exception on the UI thread, then offers the same dialog WinForms shows by default.</summary>
+    /// <summary>
+    /// Logs an exception on the UI thread, then offers the same dialog WinForms shows by default.
+    /// A session without a desktop can't show it, so the app exits there.
+    /// </summary>
     private static void OnThreadException(object sender, ThreadExceptionEventArgs e)
     {
         Log.Error("Unhandled exception", e.Exception.ToString());
+        if (!Environment.UserInteractive)
+        {
+            Application.Exit();
+            return;
+        }
+
         using var dialog = new ThreadExceptionDialog(e.Exception);
         if (dialog.ShowDialog() == DialogResult.Abort)
             Application.Exit();

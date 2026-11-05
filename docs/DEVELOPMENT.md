@@ -166,4 +166,15 @@ git push origin v1.2.3
 
 The tag build stamps the tag without the `v` as the exe's version (other builds use `<Version>` from
 `Wendel.csproj`). It then creates a draft GitHub Release named after the tag, with `wendel.exe`
-attached and generated release notes. Review the draft on GitHub and publish it manually.
+attached and generated release notes.
+
+The `virustotal` job then uploads the exe to VirusTotal, with the API key from the `VT_API_KEY`
+repository secret, waits for the result and adds it to the draft's notes with a link to the report.
+VirusTotal shares uploaded files with its partners and they can't be withdrawn, so only tag what can
+be shared.
+
+Review the draft on GitHub and publish it manually:
+
+- If engines flagged the exe, the run is red, but the draft stays. Read the report before deciding: a
+  detection or two on an unsigned exe is usually a false positive.
+- If the draft has no VirusTotal line, the exe wasn't checked. Re-run the failed job.
